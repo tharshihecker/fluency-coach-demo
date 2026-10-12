@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import tempfile
 import os
 from pathlib import Path
@@ -15,6 +16,8 @@ import whisper
 from fluency_app.inference import FluencyPredictor
 from fluency_app.feedback import feedback_is_configured, get_practice_feedback
 from fluency_app.speech_content import SpeechContentRejected
+
+logger = logging.getLogger(__name__)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -112,8 +115,14 @@ if predict_clicked:
                 st.error(str(exc))
             except (ValueError, RuntimeError, FileNotFoundError) as exc:
                 st.error(str(exc))
-            except Exception:
-                st.error("Prediction failed while processing this recording. Please try a different audio file.")
+            except Exception as exc:
+                # Keep browser output concise; record the traceback in the
+                # hosted logs so unexpected inference failures can be diagnosed.
+                logger.exception("Audio fluency prediction failed")
+                st.error(
+                    "Prediction failed while processing this recording "
+                    f"({type(exc).__name__}). Please try again."
+                )
 
 result = st.session_state.get("fluency_result")
 if result:
