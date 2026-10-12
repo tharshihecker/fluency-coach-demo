@@ -6,7 +6,8 @@ torch==2.8.0+cpu
 pandas
 numpy
 scipy
-scikit-learn
+# Match the version used to save the fitted model artifact.
+scikit-learn==1.7.2
 joblib
 librosa
 soundfile
