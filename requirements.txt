@@ -1,0 +1,17 @@
+# `st.audio_input` needs a recent Streamlit release; pin major compatibility.
+streamlit>=1.50,<2
+# Use the CPU wheel to fit the free Community Cloud resource envelope.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.8.0+cpu
+pandas
+numpy
+scipy
+scikit-learn
+joblib
+librosa
+soundfile
+shap
+openai-whisper
+matplotlib
+python-dotenv
+tqdm
