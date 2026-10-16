@@ -49,8 +49,7 @@ def predictor_cache_key() -> str:
         Path(__import__("fluency_app.audio_features", fromlist=["__file__"]).__file__).resolve(),
     ):
         digest.update(source_path.read_bytes())
-    artifact_stat = artifact_path.stat()
-    digest.update(f"{artifact_stat.st_size}:{artifact_stat.st_mtime_ns}".encode("ascii"))
+    digest.update(artifact_path.read_bytes())
     return digest.hexdigest()
 
 
