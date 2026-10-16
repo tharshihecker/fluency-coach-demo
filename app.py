@@ -75,12 +75,16 @@ def render_feature_chart(impacts: list[dict]) -> None:
 st.title("🎙️ Speech Fluency Estimator")
 st.write(
     "Record a sample on your phone or upload an audio file. The app returns a "
-    "research estimate with speech indicators and a feature influence chart."
+    "research estimate with speech indicators. Per-recording feature attribution "
+    "is not available for the current ensemble."
 )
 
 with st.sidebar:
     st.subheader("About this estimate")
-    st.write("The selected tuned Extra Trees model produces a 0–10 estimate.")
+    st.write(
+        "The selected model is a weighted ensemble of Extra Trees, Random Forest, "
+        "and XGBoost. It produces a 0–10 estimate."
+    )
     st.caption(
         "This is a research estimate, not a human expert rating, formal language "
         "certification, or clinical assessment."
@@ -143,13 +147,18 @@ if result:
                 hide_index=True,
                 use_container_width=True,
             )
-    st.subheader("What influenced the estimate")
-    render_feature_chart(result.get("feature_impacts", []))
-    st.caption(result.get("explanation_note", ""))
-    st.caption(
-        "Positive bars pushed the model estimate up; negative bars pushed it down. "
-        "They describe model behavior, not causes or expert judgments."
-    )
+    impacts = result.get("feature_impacts", [])
+    if impacts:
+        st.subheader("What influenced this estimate")
+        render_feature_chart(impacts)
+        st.caption(result.get("explanation_note", ""))
+        st.caption(
+            "Positive bars pushed the model estimate up; negative bars pushed it down. "
+            "They describe model behavior, not causes or expert judgments."
+        )
+    else:
+        st.subheader("Model explanation")
+        st.info(result.get("explanation_note", "Per-recording feature attribution is unavailable."))
 
     if feedback_is_configured():
         if st.button("Generate one practice suggestion"):
