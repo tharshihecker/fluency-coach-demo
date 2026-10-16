@@ -7,7 +7,8 @@ source recordings, filenames, and evaluation score tables.
 
 The hosted app accepts audio on Streamlit Community Cloud, computes the score
 there, and deletes its temporary local copy after inference. The score is a
-research estimate from the selected tuned Extra Trees model.
+research estimate from the selected weighted Extra Trees, Random Forest, and
+XGBoost ensemble.
 
 To deploy, publish the contents of this folder in a public GitHub repository,
 then select `app.py` as the Streamlit Community Cloud entrypoint.

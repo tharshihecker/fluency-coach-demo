@@ -1,5 +1,5 @@
 {
-  "model": "Extra Trees (tuned)",
+  "model": "Weighted tuned ensemble: Extra Trees + Random Forest + XGBoost",
   "feature_columns": [
     "duration_s",
     "silent_recording",
@@ -53,5 +53,42 @@
     "f0_range_hz",
     "energy_peak_rate_proxy_min"
   ],
-  "artifact": "selected_fluency_model.joblib"
+  "score_min": 0.0,
+  "score_max": 10.0,
+  "low_score_weighting": "<=3:4x; >3 and <=5:2x; >5:1x, normalized per training fold",
+  "feature_selection": "Top 25 absolute Spearman associations, fit on training data only",
+  "cv_folds": 5,
+  "random_seed": 42,
+  "selection_variant": "weighted_ensemble",
+  "evaluation_unit": "recording-level; speaker IDs unavailable",
+  "zero_score_rule": "silent_recording feature forces exact score 0; exact zeros separately reported",
+  "artifact": "selected_fluency_ensemble.joblib",
+  "ensemble_weights": {
+    "Extra Trees": 0.4,
+    "Random Forest": 0.30000000000000004,
+    "XGBoost": 0.3
+  },
+  "selected_parameters": {
+    "Extra Trees": {
+      "n_estimators": 500,
+      "max_features": 0.85,
+      "min_samples_leaf": 2,
+      "max_depth": null
+    },
+    "Random Forest": {
+      "n_estimators": 500,
+      "max_features": 0.65,
+      "min_samples_leaf": 4,
+      "max_depth": 18
+    },
+    "XGBoost": {
+      "n_estimators": 300,
+      "learning_rate": 0.04,
+      "max_depth": 3,
+      "min_child_weight": 2,
+      "subsample": 0.85,
+      "colsample_bytree": 0.8,
+      "reg_lambda": 3
+    }
+  }
 }

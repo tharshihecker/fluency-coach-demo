@@ -16,3 +16,5 @@ openai-whisper
 matplotlib
 python-dotenv
 tqdm
+
+xgboost==3.2.0
