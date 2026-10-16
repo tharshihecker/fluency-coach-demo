@@ -127,37 +127,39 @@ def render_voice_graphs(graphs: dict | None) -> None:
     if not graphs:
         st.info("Speech timing graphs are unavailable for this recording.")
         return
-    panels = st.columns(2)
+    figure, axes = plt.subplots(1, 2, figsize=(12, 3.6))
+    activity_axis, pause_axis = axes
     activity = graphs.get("activity") or {}
     activity_times, activity_values = activity.get("times", []), activity.get("values", [])
     if activity_times and activity_values:
-        axis = panels[0]
-        axis.step(activity_times, activity_values, where="post", color="#168d82", linewidth=2)
-        axis.fill_between(activity_times, activity_values, step="post", alpha=0.12, color="#168d82")
-        axis.set_yticks([0, 1], ["Pause", "Speaking"])
-        axis.set_ylim(-0.15, 1.15)
-        axis.set_xlabel("Time (seconds)")
-        axis.set_title("Speaking and pause timeline")
-        axis.grid(axis="x", alpha=0.2)
+        activity_axis.step(activity_times, activity_values, where="post", color="#168d82", linewidth=2)
+        activity_axis.fill_between(activity_times, activity_values, step="post", alpha=0.12, color="#168d82")
+        activity_axis.set_yticks([0, 1], ["Pause", "Speaking"])
+        activity_axis.set_ylim(-0.15, 1.15)
+        activity_axis.set_xlabel("Time (seconds)")
+        activity_axis.set_title("Speaking and pause timeline")
+        activity_axis.grid(axis="x", alpha=0.2)
     else:
-        panels[0].info("No speech activity was available for this recording.")
+        activity_axis.text(0.5, 0.5, "No speech activity was available", ha="center", va="center", transform=activity_axis.transAxes)
+        activity_axis.set_axis_off()
 
     pauses = graphs.get("pauses") or {}
     pause_times, pause_values = pauses.get("times", []), pauses.get("values", [])
     if pause_times and pause_values:
-        axis = panels[1]
         colors = ["#d64545" if value > 1.5 else "#527bb5" for value in pause_values]
-        axis.vlines(pause_times, 0, pause_values, color=colors, alpha=0.7, linewidth=1.5)
-        axis.scatter(pause_times, pause_values, c=colors, s=32, zorder=3)
-        axis.axhline(1.5, color="#d64545", linestyle="--", linewidth=1, label="1.5 s practice cue")
-        axis.set_xlabel("Time (seconds)")
-        axis.set_ylabel("Pause length (seconds)")
-        axis.set_title("Pause lengths across the recording")
-        axis.legend(frameon=False, fontsize=8)
-        axis.grid(alpha=0.2)
+        pause_axis.vlines(pause_times, 0, pause_values, color=colors, alpha=0.7, linewidth=1.5)
+        pause_axis.scatter(pause_times, pause_values, c=colors, s=32, zorder=3)
+        pause_axis.axhline(1.5, color="#d64545", linestyle="--", linewidth=1, label="1.5 s practice cue")
+        pause_axis.set_xlabel("Time (seconds)")
+        pause_axis.set_ylabel("Pause length (seconds)")
+        pause_axis.set_title("Pause lengths across the recording")
+        pause_axis.legend(frameon=False, fontsize=8)
+        pause_axis.grid(alpha=0.2)
     else:
-        panels[1].info("No internal pauses of at least 0.25 seconds were detected.")
-    st.pyplot(panels[0].figure, clear_figure=True)
+        pause_axis.text(0.5, 0.5, "No internal pauses of at least 0.25 seconds were detected", ha="center", va="center", transform=pause_axis.transAxes)
+        pause_axis.set_axis_off()
+    figure.tight_layout()
+    st.pyplot(figure, clear_figure=True)
 
 
 st.title("🎙️ Speech Fluency Estimator")
