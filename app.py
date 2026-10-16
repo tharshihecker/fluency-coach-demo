@@ -94,50 +94,76 @@ def render_feature_chart(impacts: list[dict]) -> None:
 
 
 def render_speech_profile(indicators: dict) -> None:
-    """Show interpretable timing measures on sensible, labeled display scales."""
+    """Show model-related timing measures and flag coaching cues in red."""
     duration = float(indicators.get("duration_seconds", 0))
     rows = [
         ("Speaking share", float(indicators.get("speaking_time_ratio", 0)), 1.0,
-         f"{float(indicators.get('speaking_time_ratio', 0)):.0%}"),
+         f"{float(indicators.get('speaking_time_ratio', 0)):.0%}", float(indicators.get("speaking_time_ratio", 0)) < 0.5),
         ("Pauses per minute", float(indicators.get("internal_pauses_per_minute", 0)), 20.0,
-         f"{float(indicators.get('internal_pauses_per_minute', 0)):.1f} / min"),
+         f"{float(indicators.get('internal_pauses_per_minute', 0)):.1f} / min", float(indicators.get("internal_pauses_per_minute", 0)) > 12),
         ("Average pause", float(indicators.get("mean_pause_seconds", 0)), 2.0,
-         f"{float(indicators.get('mean_pause_seconds', 0)):.2f} s"),
+         f"{float(indicators.get('mean_pause_seconds', 0)):.2f} s", float(indicators.get("mean_pause_seconds", 0)) > 0.8),
         ("Long pause estimate", float(indicators.get("long_pause_p90_seconds", 0)), 3.0,
-         f"{float(indicators.get('long_pause_p90_seconds', 0)):.2f} s"),
+         f"{float(indicators.get('long_pause_p90_seconds', 0)):.2f} s", float(indicators.get("long_pause_p90_seconds", 0)) > 1.5),
     ]
     speech_seconds = float(indicators.get("speech_time_seconds", 0))
     st.caption(f"Speech detected for {speech_seconds:.1f} of {duration:.1f} seconds.")
-    for label, value, scale, display_value in rows:
-        st.markdown(f"**{label}** · {display_value}")
-        st.progress(min(1.0, max(0.0, value / scale)))
-    st.caption("Pause bars use display scales (20 pauses/min, 2 s average pause, 3 s long pause).")
+    for label, value, scale, display_value, weak in rows:
+        color = "#d64545" if weak else "#168d82"
+        flag = " · Practice cue" if weak else ""
+        st.markdown(f"**{label}** · {display_value}{flag}")
+        width = min(100.0, max(0.0, value / scale * 100))
+        st.markdown(
+            f'<div role="meter" aria-label="{label}" aria-valuenow="{value:.3f}" '
+            f'style="height:8px;border-radius:8px;background:#e7edf4;margin:0 0 8px;">'
+            f'<div style="width:{width:.1f}%;height:8px;border-radius:8px;background:{color};"></div></div>',
+            unsafe_allow_html=True,
+        )
+    st.caption("Red highlights coaching cues (speaking share <50%, >12 pauses/min, average pause >0.8 s, or long pause >1.5 s). These are heuristics, not model cutoffs or clinical standards.")
 
 
 def render_voice_graphs(graphs: dict | None) -> None:
-    """Render the recording's downsampled energy and pitch time series."""
+    """Render speech activity and pause timing, the fluency-related time series."""
     if not graphs:
-        st.info("Voice graphs are unavailable for this recording.")
+        st.info("Speech timing graphs are unavailable for this recording.")
         return
     panels = st.columns(2)
-    for panel, key, title, y_label in [
-        (panels[0], "energy", "Energy over time", "Relative energy (dB)"),
-        (panels[1], "pitch", "Pitch over time", "Pitch (Hz)"),
-    ]:
-        series = graphs.get(key) or {}
-        times, values = series.get("times", []), series.get("values", [])
-        if times and values:
-            chart_data = pd.DataFrame({"Time (seconds)": times, y_label: values})
-            panel.line_chart(chart_data, x="Time (seconds)", y=y_label, height=260)
-            panel.caption(title)
-        else:
-            panel.info(f"{title} is unavailable for this recording.")
+    activity = graphs.get("activity") or {}
+    activity_times, activity_values = activity.get("times", []), activity.get("values", [])
+    if activity_times and activity_values:
+        axis = panels[0]
+        axis.step(activity_times, activity_values, where="post", color="#168d82", linewidth=2)
+        axis.fill_between(activity_times, activity_values, step="post", alpha=0.12, color="#168d82")
+        axis.set_yticks([0, 1], ["Pause", "Speaking"])
+        axis.set_ylim(-0.15, 1.15)
+        axis.set_xlabel("Time (seconds)")
+        axis.set_title("Speaking and pause timeline")
+        axis.grid(axis="x", alpha=0.2)
+    else:
+        panels[0].info("No speech activity was available for this recording.")
+
+    pauses = graphs.get("pauses") or {}
+    pause_times, pause_values = pauses.get("times", []), pauses.get("values", [])
+    if pause_times and pause_values:
+        axis = panels[1]
+        colors = ["#d64545" if value > 1.5 else "#527bb5" for value in pause_values]
+        axis.vlines(pause_times, 0, pause_values, color=colors, alpha=0.7, linewidth=1.5)
+        axis.scatter(pause_times, pause_values, c=colors, s=32, zorder=3)
+        axis.axhline(1.5, color="#d64545", linestyle="--", linewidth=1, label="1.5 s practice cue")
+        axis.set_xlabel("Time (seconds)")
+        axis.set_ylabel("Pause length (seconds)")
+        axis.set_title("Pause lengths across the recording")
+        axis.legend(frameon=False, fontsize=8)
+        axis.grid(alpha=0.2)
+    else:
+        panels[1].info("No internal pauses of at least 0.25 seconds were detected.")
+    st.pyplot(panels[0].figure, clear_figure=True)
 
 
 st.title("🎙️ Speech Fluency Estimator")
 st.write(
     "Record a sample on your phone or upload an audio file. The app returns a "
-    "research estimate with a speech profile, voice graphs, and a local SHAP explanation."
+    "research estimate with fluency timing graphs and a local SHAP explanation."
 )
 
 with st.sidebar:
@@ -211,7 +237,7 @@ if result:
                     use_container_width=True,
                 )
 
-    st.subheader("How your voice changed over time")
+    st.subheader("Speech rhythm across your recording")
     render_voice_graphs(result.get("voice_graphs"))
     impacts = result.get("feature_impacts", [])
     if impacts:

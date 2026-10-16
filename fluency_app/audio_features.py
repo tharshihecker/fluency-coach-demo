@@ -59,7 +59,11 @@ def extract_audio_features(
             zero[f"mfcc{i:02d}_mean"] = 0.0
             zero[f"mfcc{i:02d}_std"] = 0.0
         if include_voice_graphs:
-            zero["_voice_graphs"] = {"duration_seconds": round(y.size / sr, 2), "energy": [], "pitch": []}
+            zero["_voice_graphs"] = {
+                "duration_seconds": round(y.size / sr, 2),
+                "activity": {"times": [], "values": []},
+                "pauses": {"times": [], "values": []},
+            }
         return zero
 
     frame = int(0.030 * sr)
@@ -125,23 +129,9 @@ def extract_audio_features(
     feats["f0_range_hz"] = float(np.nanpercentile(f0, 90) - np.nanpercentile(f0, 10))
 
     if include_voice_graphs:
-        # Keep visualization payloads bounded while preserving the recording's
-        # overall shape. Energy is relative to the clip peak; pitch gaps indicate
-        # pauses or frames where a stable voiced pitch was not found.
-        max_points = 160
-        energy_db = 20 * np.log10(np.maximum(rms, 1e-6) / max(float(rms.max()), 1e-6))
-        energy_db = np.clip(energy_db, -45, 0)
-        pitch_times = frame_times[first] + librosa.frames_to_time(
-            np.arange(f0.size), sr=sr, hop_length=hop
-        )
-        pitch_indices = np.rint(pitch_times * sr / hop).astype(int)
-        pitch_active = np.zeros(f0.size, dtype=bool)
-        valid_indices = (pitch_indices >= 0) & (pitch_indices < active.size)
-        pitch_active[valid_indices] = active[pitch_indices[valid_indices]]
-        pitch_values: list[float | None] = [
-            round(float(value), 1) if is_active and 75 <= value <= 500 else None
-            for value, is_active in zip(f0, pitch_active)
-        ]
+        # Plot the timing patterns most directly related to fluency: detected
+        # speech activity and internal pause lengths. Keep payloads bounded.
+        max_points = 240
 
         def downsample(values: np.ndarray | list[float | None], times: np.ndarray) -> tuple[list[float], list[float | None]]:
             if len(values) <= max_points:
@@ -153,12 +143,16 @@ def extract_audio_features(
                 [float(values[index]) if values[index] is not None else None for index in indices],
             )
 
-        energy_times, energy_values = downsample(energy_db, frame_times)
-        sampled_pitch_times, sampled_pitch_values = downsample(pitch_values, pitch_times)
+        activity_times, activity_values = downsample(active.astype(float), frame_times)
+        pause_centers = frame_times[starts[inside]] + pause_s[inside] / 2
+        pause_mask = pause_s[inside] >= 0.25
         feats["_voice_graphs"] = {
             "duration_seconds": round(total_seconds, 2),
-            "energy": {"times": energy_times, "values": energy_values},
-            "pitch": {"times": sampled_pitch_times, "values": sampled_pitch_values},
+            "activity": {"times": activity_times, "values": activity_values},
+            "pauses": {
+                "times": [round(float(value), 2) for value in pause_centers[pause_mask]],
+                "values": [round(float(value), 2) for value in pause_s[inside][pause_mask]],
+            },
         }
 
     env = librosa.feature.rms(y=speech, frame_length=frame, hop_length=hop)[0]
