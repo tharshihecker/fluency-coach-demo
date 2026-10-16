@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import librosa
 import numpy as np
@@ -22,7 +23,12 @@ def _mean_std(values: np.ndarray, prefix: str) -> dict[str, float]:
     }
 
 
-def extract_audio_features(y: np.ndarray, sr: int = TARGET_SR, filename: str = "audio") -> dict[str, float | str]:
+def extract_audio_features(
+    y: np.ndarray,
+    sr: int = TARGET_SR,
+    filename: str = "audio",
+    include_voice_graphs: bool = False,
+) -> dict[str, Any]:
     """Extract the same 51 numeric predictors used to train the final model."""
     y = np.nan_to_num(np.asarray(y, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
     if sr != TARGET_SR:
@@ -52,6 +58,8 @@ def extract_audio_features(y: np.ndarray, sr: int = TARGET_SR, filename: str = "
         for i in range(1, 14):
             zero[f"mfcc{i:02d}_mean"] = 0.0
             zero[f"mfcc{i:02d}_std"] = 0.0
+        if include_voice_graphs:
+            zero["_voice_graphs"] = {"duration_seconds": round(y.size / sr, 2), "energy": [], "pitch": []}
         return zero
 
     frame = int(0.030 * sr)
@@ -116,6 +124,43 @@ def extract_audio_features(y: np.ndarray, sr: int = TARGET_SR, filename: str = "
     feats.update(_mean_std(f0, "f0_hz"))
     feats["f0_range_hz"] = float(np.nanpercentile(f0, 90) - np.nanpercentile(f0, 10))
 
+    if include_voice_graphs:
+        # Keep visualization payloads bounded while preserving the recording's
+        # overall shape. Energy is relative to the clip peak; pitch gaps indicate
+        # pauses or frames where a stable voiced pitch was not found.
+        max_points = 160
+        energy_db = 20 * np.log10(np.maximum(rms, 1e-6) / max(float(rms.max()), 1e-6))
+        energy_db = np.clip(energy_db, -45, 0)
+        pitch_times = frame_times[first] + librosa.frames_to_time(
+            np.arange(f0.size), sr=sr, hop_length=hop
+        )
+        pitch_indices = np.rint(pitch_times * sr / hop).astype(int)
+        pitch_active = np.zeros(f0.size, dtype=bool)
+        valid_indices = (pitch_indices >= 0) & (pitch_indices < active.size)
+        pitch_active[valid_indices] = active[pitch_indices[valid_indices]]
+        pitch_values: list[float | None] = [
+            round(float(value), 1) if is_active and 75 <= value <= 500 else None
+            for value, is_active in zip(f0, pitch_active)
+        ]
+
+        def downsample(values: np.ndarray | list[float | None], times: np.ndarray) -> tuple[list[float], list[float | None]]:
+            if len(values) <= max_points:
+                indices = np.arange(len(values))
+            else:
+                indices = np.linspace(0, len(values) - 1, max_points).astype(int)
+            return (
+                [round(float(times[index]), 2) for index in indices],
+                [float(values[index]) if values[index] is not None else None for index in indices],
+            )
+
+        energy_times, energy_values = downsample(energy_db, frame_times)
+        sampled_pitch_times, sampled_pitch_values = downsample(pitch_values, pitch_times)
+        feats["_voice_graphs"] = {
+            "duration_seconds": round(total_seconds, 2),
+            "energy": {"times": energy_times, "values": energy_values},
+            "pitch": {"times": sampled_pitch_times, "values": sampled_pitch_values},
+        }
+
     env = librosa.feature.rms(y=speech, frame_length=frame, hop_length=hop)[0]
     peaks, _ = signal.find_peaks(
         env,
@@ -126,8 +171,14 @@ def extract_audio_features(y: np.ndarray, sr: int = TARGET_SR, filename: str = "
     return feats
 
 
-def extract_processed_file(path: str | Path, filename: str | None = None) -> dict[str, float | str]:
+def extract_processed_file(
+    path: str | Path,
+    filename: str | None = None,
+    include_voice_graphs: bool = False,
+) -> dict[str, Any]:
     """Load an already-enhanced 16 kHz mono file and extract model features."""
     audio_path = Path(path)
     y, sr = librosa.load(audio_path, sr=TARGET_SR, mono=True)
-    return extract_audio_features(y, sr=sr, filename=filename or audio_path.name)
+    return extract_audio_features(
+        y, sr=sr, filename=filename or audio_path.name, include_voice_graphs=include_voice_graphs
+    )

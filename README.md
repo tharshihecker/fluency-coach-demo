@@ -8,12 +8,15 @@ source recordings, filenames, and evaluation score tables.
 The hosted app accepts audio on Streamlit Community Cloud, computes the score
 there, and deletes its temporary local copy after inference. The score is a
 research estimate from the selected weighted Extra Trees, Random Forest, and
-XGBoost ensemble.
+XGBoost ensemble. Results include a speech profile, energy and pitch graphs, and
+a local permutation-SHAP explanation for the ensemble. The speech profile is
+for the current recording; it is not a saved user account or history.
 
 To deploy, publish the contents of this folder in a public GitHub repository,
 then select `app.py` as the Streamlit Community Cloud entrypoint.
 
-Optional feedback remains disabled until a `GROQ_API_KEY` is added to the
-Streamlit app's Secrets settings. If enabled, it is called only when a visitor
-clicks the feedback button and receives the score, selected numeric indicators,
-and SHAP impacts—not the audio, file name, transcript, or expert scores.
+Practice feedback is available on request. Without an AI provider key, the app
+uses built-in local guidance. If a provider key is configured in Streamlit
+Secrets, clicking the feedback button sends the score, numeric indicators, and
+SHAP impacts to that provider—not the audio, file name, transcript, or expert
+scores.

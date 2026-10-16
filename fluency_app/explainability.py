@@ -82,13 +82,15 @@ class LocalTreeShapExplainer:
             model_output="raw",
         )
 
-    def explain(self, features: dict[str, Any], top_n: int = 6) -> dict[str, Any]:
+    def explain(self, features: dict[str, Any], top_n: int | None = 6) -> dict[str, Any]:
         row = pd.DataFrame([{name: features.get(name, np.nan) for name in self.feature_columns}])
         selected = self.selector.transform(self.imputer.transform(row))
         explanation = self.explainer(selected, check_additivity=False)
         impacts = np.asarray(explanation.values, dtype=float).reshape(-1)
         base = np.asarray(explanation.base_values, dtype=float).reshape(-1)[0]
-        order = np.argsort(np.abs(impacts))[::-1][:top_n]
+        order = np.argsort(np.abs(impacts))[::-1]
+        if top_n is not None:
+            order = order[:top_n]
         return {
             "baseline_score": round(float(base), 3),
             "feature_impacts": [
@@ -104,6 +106,90 @@ class LocalTreeShapExplainer:
             "explanation_note": (
                 "Positive bars raised this estimate relative to the model's background average; "
                 "negative bars lowered it. These show model influences, not causes or expert judgments."
+            ),
+        }
+
+
+class LocalWeightedEnsembleShapExplainer:
+    """Explain a weighted tree ensemble with model-agnostic permutation SHAP."""
+
+    def __init__(
+        self,
+        *,
+        models: dict[str, Any],
+        members: list[str],
+        weights: np.ndarray,
+        feature_columns: list[str],
+        project_root: str | Path,
+    ) -> None:
+        import shap
+
+        self.members = list(members)
+        self.weights = np.asarray(weights, dtype=float)
+        if len(self.members) != len(self.weights) or not np.isclose(self.weights.sum(), 1.0):
+            raise ValueError("Ensemble models and SHAP weights are inconsistent.")
+        self.models = models
+        self.feature_columns = list(feature_columns)
+        selected_indices = set()
+        for name in self.members:
+            selected_indices.update(np.asarray(models[name].named_steps["select"].indices_, dtype=int))
+        self.selected_names = [
+            self.feature_columns[index]
+            for index in range(len(self.feature_columns))
+            if index in selected_indices
+        ]
+        self.project_root = Path(project_root)
+        background_path = self.project_root / "outputs" / "explainability" / "shap_background.csv"
+        if not background_path.is_file():
+            raise FileNotFoundError("The ensemble SHAP background file is missing.")
+        background_frame = pd.read_csv(background_path, usecols=self.selected_names)
+        background = background_frame.replace([np.inf, -np.inf], np.nan).to_numpy(float)
+        if not len(background):
+            raise ValueError("The SHAP background has no acoustic feature rows.")
+        self.explainer = shap.PermutationExplainer(
+            self._predict,
+            shap.maskers.Independent(background, max_samples=len(background)),
+            feature_names=[display_feature_name(name) for name in self.selected_names],
+            seed=42,
+        )
+
+    def _predict(self, selected_values: np.ndarray) -> np.ndarray:
+        values = np.asarray(selected_values, dtype=float)
+        if values.ndim == 1:
+            values = values.reshape(1, -1)
+        full = pd.DataFrame(0.0, index=np.arange(len(values)), columns=self.feature_columns)
+        full.loc[:, self.selected_names] = values
+        member_predictions = np.column_stack([
+            np.asarray(self.models[name].predict(full), dtype=float).reshape(-1)
+            for name in self.members
+        ])
+        return np.clip(member_predictions @ self.weights, 0.0, 10.0)
+
+    def explain(self, features: dict[str, Any], top_n: int = 6) -> dict[str, Any]:
+        """Explain the exact clipped blend output across the member feature union."""
+        row = np.asarray([features.get(name, np.nan) for name in self.selected_names], dtype=float)
+        row = np.where(np.isfinite(row), row, np.nan)
+        explanation = self.explainer(
+            row.reshape(1, -1), max_evals=4 * len(self.selected_names) + 1
+        )
+        impacts = np.asarray(explanation.values, dtype=float).reshape(-1)
+        baseline = float(np.asarray(explanation.base_values, dtype=float).reshape(-1)[0])
+        order = np.argsort(np.abs(impacts))[::-1][:top_n]
+        return {
+            "baseline_score": round(baseline, 3),
+            "feature_impacts": [
+                {
+                    "feature": display_feature_name(self.selected_names[index]),
+                    "feature_key": self.selected_names[index],
+                    "value": round(float(row[index]), 4) if np.isfinite(row[index]) else None,
+                    "impact": round(float(impacts[index]), 4),
+                }
+                for index in order
+            ],
+            "explanation_method": "Permutation SHAP (weighted ensemble)",
+            "explanation_note": (
+                "Permutation SHAP estimates how the weighted ensemble's selected acoustic inputs "
+                "influenced this estimate. These show model behavior, not causes or expert judgments."
             ),
         }
 

@@ -66,17 +66,57 @@ def render_feature_chart(impacts: list[dict]) -> None:
     axis.barh([item["feature"] for item in ordered],
               [item["impact"] for item in ordered], color=colors)
     axis.axvline(0, color="#64748b", linewidth=0.8)
-    axis.set_xlabel("Change relative to the model's background average")
-    axis.set_title("Feature influence for this estimate")
+    axis.set_xlabel("SHAP contribution (score points)")
+    axis.set_title("Feature influence on this estimate")
     figure.tight_layout()
     st.pyplot(figure, clear_figure=True)
+
+
+def render_speech_profile(indicators: dict) -> None:
+    """Show interpretable timing measures on sensible, labeled display scales."""
+    duration = float(indicators.get("duration_seconds", 0))
+    rows = [
+        ("Speaking share", float(indicators.get("speaking_time_ratio", 0)), 1.0,
+         f"{float(indicators.get('speaking_time_ratio', 0)):.0%}"),
+        ("Pauses per minute", float(indicators.get("internal_pauses_per_minute", 0)), 20.0,
+         f"{float(indicators.get('internal_pauses_per_minute', 0)):.1f} / min"),
+        ("Average pause", float(indicators.get("mean_pause_seconds", 0)), 2.0,
+         f"{float(indicators.get('mean_pause_seconds', 0)):.2f} s"),
+        ("Long pause estimate", float(indicators.get("long_pause_p90_seconds", 0)), 3.0,
+         f"{float(indicators.get('long_pause_p90_seconds', 0)):.2f} s"),
+    ]
+    speech_seconds = float(indicators.get("speech_time_seconds", 0))
+    st.caption(f"Speech detected for {speech_seconds:.1f} of {duration:.1f} seconds.")
+    for label, value, scale, display_value in rows:
+        st.markdown(f"**{label}** · {display_value}")
+        st.progress(min(1.0, max(0.0, value / scale)))
+    st.caption("Pause bars use display scales (20 pauses/min, 2 s average pause, 3 s long pause).")
+
+
+def render_voice_graphs(graphs: dict | None) -> None:
+    """Render the recording's downsampled energy and pitch time series."""
+    if not graphs:
+        st.info("Voice graphs are unavailable for this recording.")
+        return
+    panels = st.columns(2)
+    for panel, key, title, y_label in [
+        (panels[0], "energy", "Energy over time", "Relative energy (dB)"),
+        (panels[1], "pitch", "Pitch over time", "Pitch (Hz)"),
+    ]:
+        series = graphs.get(key) or {}
+        times, values = series.get("times", []), series.get("values", [])
+        if times and values:
+            chart_data = pd.DataFrame({"Time (seconds)": times, y_label: values})
+            panel.line_chart(chart_data, x="Time (seconds)", y=y_label, height=260)
+            panel.caption(title)
+        else:
+            panel.info(f"{title} is unavailable for this recording.")
 
 
 st.title("🎙️ Speech Fluency Estimator")
 st.write(
     "Record a sample on your phone or upload an audio file. The app returns a "
-    "research estimate with speech indicators. Per-recording feature attribution "
-    "is not available for the current ensemble."
+    "research estimate with a speech profile, voice graphs, and a local SHAP explanation."
 )
 
 with st.sidebar:
@@ -138,15 +178,20 @@ if result:
             st.caption(result.get("message", ""))
         indicators = result.get("indicators", {})
         if indicators:
-            st.subheader("Speech indicators")
-            st.dataframe(
-                pd.DataFrame(
-                    [{"Indicator": key.replace("_", " ").title(), "Value": value}
-                     for key, value in indicators.items()]
-                ),
-                hide_index=True,
-                use_container_width=True,
-            )
+            st.subheader("Your speech profile")
+            render_speech_profile(indicators)
+            with st.expander("Detailed speech indicators"):
+                st.dataframe(
+                    pd.DataFrame(
+                        [{"Indicator": key.replace("_", " ").title(), "Value": value}
+                         for key, value in indicators.items()]
+                    ),
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
+    st.subheader("How your voice changed over time")
+    render_voice_graphs(result.get("voice_graphs"))
     impacts = result.get("feature_impacts", [])
     if impacts:
         st.subheader("What influenced this estimate")
@@ -160,18 +205,24 @@ if result:
         st.subheader("Model explanation")
         st.info(result.get("explanation_note", "Per-recording feature attribution is unavailable."))
 
-    if feedback_is_configured():
-        if st.button("Generate one practice suggestion"):
-            try:
-                payload = {
-                    "score": result["score"],
-                    "silent_recording": result.get("silent_recording", False),
-                    "indicators": result.get("indicators", {}),
-                    "feature_impacts": [
-                        {"feature": item["feature"], "impact": item["impact"]}
-                        for item in result.get("feature_impacts", [])
-                    ],
-                }
-                st.write(get_practice_feedback(payload))
-            except Exception as exc:
-                st.error(f"Feedback is temporarily unavailable: {exc}")
+    st.subheader("Practice feedback")
+    feedback_source = "the configured AI provider" if feedback_is_configured() else "built-in guidance"
+    st.caption(
+        f"On request, feedback uses {feedback_source}. Audio and transcripts are not sent to the feedback provider."
+    )
+    if st.button("Generate practice feedback"):
+        try:
+            payload = {
+                "score": result["score"],
+                "silent_recording": result.get("silent_recording", False),
+                "indicators": result.get("indicators", {}),
+                "feature_impacts": [
+                    {"feature": item["feature"], "impact": item["impact"]}
+                    for item in result.get("feature_impacts", [])
+                ],
+            }
+            feedback = get_practice_feedback(payload)
+            st.write(feedback["feedback"])
+            st.caption(f"Feedback source: {feedback['provider']}")
+        except Exception as exc:
+            st.error(f"Feedback is temporarily unavailable: {exc}")

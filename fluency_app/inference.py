@@ -14,7 +14,11 @@ import torch
 from torch import nn
 
 from fluency_app.audio_features import TARGET_SR, extract_processed_file
-from fluency_app.explainability import LocalShapExplainer, LocalTreeShapExplainer
+from fluency_app.explainability import (
+    LocalShapExplainer,
+    LocalTreeShapExplainer,
+    LocalWeightedEnsembleShapExplainer,
+)
 from fluency_app.models import ResidualMLP
 from fluency_app.speech_detection import detect_speech
 from fluency_app.speech_content import SpeechContentRejected, validate_english_content
@@ -54,6 +58,7 @@ class FluencyPredictor:
         self.project_root = self.artifact_dir.resolve().parent
         self._shap_explainer: LocalShapExplainer | None = None
         self._tree_shap_explainer: LocalTreeShapExplainer | None = None
+        self._ensemble_shap_explainer: LocalWeightedEnsembleShapExplainer | None = None
         if metadata_path.is_file():
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             artifact_name = metadata.get("artifact", "")
@@ -168,6 +173,7 @@ class FluencyPredictor:
         confirm_english: bool = False,
     ) -> dict:
         """Enhance one input, run the shared feature extractor, and predict fluency."""
+        voice_graphs = None
         with tempfile.TemporaryDirectory(prefix="fluency-") as work_dir:
             processed_path = Path(work_dir) / "enhanced.wav"
             preprocessing_report = process_one(Path(audio_path), processed_path, normalize=True)
@@ -218,7 +224,10 @@ class FluencyPredictor:
                     )
                     if not accepted:
                         raise SpeechContentRejected(rejection_reason, language_code, language_name)
-                features = extract_processed_file(processed_path, filename=original_name)
+                features = extract_processed_file(
+                    processed_path, filename=original_name, include_voice_graphs=True
+                )
+                voice_graphs = features.pop("_voice_graphs", None)
                 # The fitted model only saw complete recordings of at least 20 s,
                 # with at least 10 s of speech and a 20% speaking-time ratio.
                 # Keep short/noisy clips outside that training range from receiving
@@ -276,9 +285,20 @@ class FluencyPredictor:
             "explanation_note": "A local SHAP explanation is calculated for the final estimate.",
         }
         if explain and not is_silent and self.ensemble_model:
-            explanation["explanation_note"] = (
-                "The estimate uses a weighted ensemble; local feature attribution is unavailable for this ensemble."
-            )
+            try:
+                if self._ensemble_shap_explainer is None:
+                    self._ensemble_shap_explainer = LocalWeightedEnsembleShapExplainer(
+                        models=self.models,
+                        members=self.ensemble_members,
+                        weights=self.ensemble_weights,
+                        feature_columns=self.feature_columns,
+                        project_root=self.project_root,
+                    )
+                explanation = self._ensemble_shap_explainer.explain(features)
+            except Exception:
+                explanation["explanation_note"] = (
+                    "The estimate is ready, but its ensemble SHAP explanation could not be calculated."
+                )
         elif explain and not is_silent and self.classical_model:
             try:
                 if self._tree_shap_explainer is None:
@@ -315,6 +335,7 @@ class FluencyPredictor:
             "score_scale": {"minimum": 0, "maximum": 10},
             "silent_recording": is_silent,
             "speech_detected": not is_silent,
+            "voice_graphs": voice_graphs if not is_silent else None,
             "detected_language": "English" if not is_silent else None,
             "detected_language_code": "en" if not is_silent else None,
             "english_words_confirmed": not is_silent,
