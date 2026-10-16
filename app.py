@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import tempfile
 import os
+import hashlib
+import json
 from pathlib import Path
 
 import matplotlib
@@ -33,13 +35,33 @@ st.set_page_config(
 )
 
 
+def predictor_cache_key() -> str:
+    """Change the resource-cache key when the artifact or inference code changes."""
+    metadata_path = ROOT / "outputs" / "selected_fluency_model_metadata.json"
+    metadata_bytes = metadata_path.read_bytes()
+    metadata = json.loads(metadata_bytes)
+    artifact_path = ROOT / "outputs" / metadata["artifact"]
+    digest = hashlib.sha256(metadata_bytes)
+    for source_path in (
+        Path(__file__).resolve(),
+        Path(__import__("fluency_app.inference", fromlist=["__file__"]).__file__).resolve(),
+        Path(__import__("fluency_app.explainability", fromlist=["__file__"]).__file__).resolve(),
+        Path(__import__("fluency_app.audio_features", fromlist=["__file__"]).__file__).resolve(),
+    ):
+        digest.update(source_path.read_bytes())
+    artifact_stat = artifact_path.stat()
+    digest.update(f"{artifact_stat.st_size}:{artifact_stat.st_mtime_ns}".encode("ascii"))
+    return digest.hexdigest()
+
+
 @st.cache_resource(show_spinner="Loading the fluency model…")
-def load_predictor() -> FluencyPredictor:
+def load_predictor(cache_key: str) -> FluencyPredictor:
+    # cache_key fingerprints the model artifact and the prediction/explanation code.
     return FluencyPredictor(ROOT / "outputs")
 
 
 def get_recording_result(audio_file, confirm_english: bool) -> dict:
-    predictor = load_predictor()
+    predictor = load_predictor(predictor_cache_key())
     suffix = Path(audio_file.name or "recording.wav").suffix.lower() or ".wav"
     with tempfile.NamedTemporaryFile(prefix="fluency-upload-", suffix=suffix, delete=False) as handle:
         temp_path = Path(handle.name)
