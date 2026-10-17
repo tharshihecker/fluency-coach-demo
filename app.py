@@ -96,30 +96,46 @@ def render_feature_chart(impacts: list[dict]) -> None:
 def render_speech_profile(indicators: dict) -> None:
     """Show model-related timing measures and flag coaching cues in red."""
     duration = float(indicators.get("duration_seconds", 0))
-    rows = [
-        ("Speaking share", float(indicators.get("speaking_time_ratio", 0)), 1.0,
-         f"{float(indicators.get('speaking_time_ratio', 0)):.0%}", float(indicators.get("speaking_time_ratio", 0)) < 0.5),
-        ("Pauses per minute", float(indicators.get("internal_pauses_per_minute", 0)), 20.0,
-         f"{float(indicators.get('internal_pauses_per_minute', 0)):.1f} / min", float(indicators.get("internal_pauses_per_minute", 0)) > 12),
-        ("Average pause", float(indicators.get("mean_pause_seconds", 0)), 2.0,
-         f"{float(indicators.get('mean_pause_seconds', 0)):.2f} s", float(indicators.get("mean_pause_seconds", 0)) > 0.8),
-        ("Long pause estimate", float(indicators.get("long_pause_p90_seconds", 0)), 3.0,
-         f"{float(indicators.get('long_pause_p90_seconds', 0)):.2f} s", float(indicators.get("long_pause_p90_seconds", 0)) > 1.5),
-    ]
     speech_seconds = float(indicators.get("speech_time_seconds", 0))
-    st.caption(f"Speech detected for {speech_seconds:.1f} of {duration:.1f} seconds.")
-    for label, value, scale, display_value, weak in rows:
-        color = "#d64545" if weak else "#168d82"
-        flag = " · Practice cue" if weak else ""
-        st.markdown(f"**{label}** · {display_value}{flag}")
-        width = min(100.0, max(0.0, value / scale * 100))
-        st.markdown(
-            f'<div role="meter" aria-label="{label}" aria-valuenow="{value:.3f}" '
-            f'style="height:8px;border-radius:8px;background:#e7edf4;margin:0 0 8px;">'
-            f'<div style="width:{width:.1f}%;height:8px;border-radius:8px;background:{color};"></div></div>',
-            unsafe_allow_html=True,
+    share = min(1.0, max(0.0, float(indicators.get("speaking_time_ratio", 0))))
+    visual_col, measures_col = st.columns([1, 2])
+    with visual_col:
+        figure, axis = plt.subplots(figsize=(2.3, 2.3))
+        axis.pie(
+            [share, max(0.0, 1 - share)],
+            startangle=90,
+            counterclock=False,
+            colors=["#168d82", "#e7edf4"],
+            wedgeprops={"width": 0.25, "edgecolor": "white"},
         )
-    st.caption("Red highlights coaching cues (speaking share <50%, >12 pauses/min, average pause >0.8 s, or long pause >1.5 s). These are heuristics, not model cutoffs or clinical standards.")
+        axis.text(0, 0.06, f"{share:.0%}", ha="center", va="center", fontsize=20, weight="bold", color="#172a40")
+        axis.text(0, -0.2, "speaking", ha="center", va="center", fontsize=9, color="#6f8092")
+        axis.set_title("Speaking share", fontsize=10, color="#172a40")
+        st.pyplot(figure, clear_figure=True)
+    with measures_col:
+        st.caption(f"{speech_seconds:.1f} s speech in a {duration:.1f} s recording")
+        rows = [
+            ("Speaking share", float(indicators.get("speaking_time_ratio", 0)), 1.0,
+             f"{float(indicators.get('speaking_time_ratio', 0)):.0%}", float(indicators.get("speaking_time_ratio", 0)) < 0.5),
+            ("Pauses per minute", float(indicators.get("internal_pauses_per_minute", 0)), 20.0,
+             f"{float(indicators.get('internal_pauses_per_minute', 0)):.1f} / min", float(indicators.get("internal_pauses_per_minute", 0)) > 12),
+            ("Average pause", float(indicators.get("mean_pause_seconds", 0)), 2.0,
+             f"{float(indicators.get('mean_pause_seconds', 0)):.2f} s", float(indicators.get("mean_pause_seconds", 0)) > 0.8),
+            ("Long pause estimate", float(indicators.get("long_pause_p90_seconds", 0)), 3.0,
+             f"{float(indicators.get('long_pause_p90_seconds', 0)):.2f} s", float(indicators.get("long_pause_p90_seconds", 0)) > 1.5),
+        ]
+        for label, value, scale, display_value, weak in rows:
+            color = "#d64545" if weak else "#168d82"
+            flag = " · Practice cue" if weak else ""
+            st.markdown(f"**{label}** · {display_value}{flag}")
+            width = min(100.0, max(0.0, value / scale * 100))
+            st.markdown(
+                f'<div role="meter" aria-label="{label}" aria-valuenow="{value:.3f}" '
+                f'style="height:8px;border-radius:8px;background:#e7edf4;margin:0 0 8px;">'
+                f'<div style="width:{width:.1f}%;height:8px;border-radius:8px;background:{color};"></div></div>',
+                unsafe_allow_html=True,
+            )
+        st.caption("Red cues use coaching heuristics, not model cutoffs or clinical standards.")
 
 
 def render_voice_graphs(graphs: dict | None) -> None:
@@ -127,8 +143,11 @@ def render_voice_graphs(graphs: dict | None) -> None:
     if not graphs:
         st.info("Speech timing graphs are unavailable for this recording.")
         return
-    figure, axes = plt.subplots(1, 2, figsize=(12, 3.6))
-    activity_axis, pause_axis = axes
+    figure = plt.figure(figsize=(12, 6.2), constrained_layout=True)
+    grid = figure.add_gridspec(2, 2, height_ratios=[1.0, 0.82])
+    activity_axis = figure.add_subplot(grid[0, 0])
+    pause_axis = figure.add_subplot(grid[0, 1])
+    distribution_axis = figure.add_subplot(grid[1, :])
     activity = graphs.get("activity") or {}
     activity_times, activity_values = activity.get("times", []), activity.get("values", [])
     if activity_times and activity_values:
@@ -158,7 +177,15 @@ def render_voice_graphs(graphs: dict | None) -> None:
     else:
         pause_axis.text(0.5, 0.5, "No internal pauses of at least 0.25 seconds were detected", ha="center", va="center", transform=pause_axis.transAxes)
         pause_axis.set_axis_off()
-    figure.tight_layout()
+
+    ranges = [(0.25, 0.5), (0.5, 1.0), (1.0, 1.5), (1.5, float("inf"))]
+    counts = [sum(low <= float(value) < high for value in pause_values) for low, high in ranges]
+    labels = ["0.25–0.49 s", "0.5–0.99 s", "1.0–1.49 s", "1.5 s +"]
+    colors = ["#4d88bd", "#4d88bd", "#4d88bd", "#d64545"]
+    distribution_axis.bar(labels, counts, color=colors, width=0.62)
+    distribution_axis.set_title("Pause duration groups")
+    distribution_axis.set_ylabel("Number of pauses")
+    distribution_axis.grid(axis="y", alpha=0.2)
     st.pyplot(figure, clear_figure=True)
 
 
@@ -238,6 +265,18 @@ if result:
                     hide_index=True,
                     use_container_width=True,
                 )
+    if indicators:
+        st.subheader("Key fluency measures")
+        metric_columns = st.columns(4)
+        metric_rows = [
+            ("Speaking share", indicators.get("speaking_time_ratio", 0), "{:.0%}", float(indicators.get("speaking_time_ratio", 0)) < 0.5),
+            ("Pauses / minute", indicators.get("internal_pauses_per_minute", 0), "{:.1f}", float(indicators.get("internal_pauses_per_minute", 0)) > 12),
+            ("Average pause", indicators.get("mean_pause_seconds", 0), "{:.2f} s", float(indicators.get("mean_pause_seconds", 0)) > 0.8),
+            ("Long pause", indicators.get("long_pause_p90_seconds", 0), "{:.2f} s", float(indicators.get("long_pause_p90_seconds", 0)) > 1.5),
+        ]
+        for column, (label, value, format_string, weak) in zip(metric_columns, metric_rows):
+            column.metric(label, format_string.format(float(value)))
+            column.caption("🔴 Practice cue" if weak else "Timing measure")
 
     st.subheader("Speech rhythm across your recording")
     render_voice_graphs(result.get("voice_graphs"))

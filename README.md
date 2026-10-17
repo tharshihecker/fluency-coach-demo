@@ -9,7 +9,9 @@ The hosted app accepts audio on Streamlit Community Cloud, computes the score
 there, and deletes its temporary local copy after inference. The score is a
 research estimate from the selected weighted Extra Trees, Random Forest, and
 XGBoost ensemble. Results include a speech profile, speech-activity and pause-
-duration graphs, and a local permutation-SHAP explanation for the ensemble.
+duration graphs, pause-duration distribution, a speaking-share donut, and a
+local permutation-SHAP explanation for the ensemble. Four key timing measures
+are summarized as visual cards before the detailed indicators.
 Red marks identify timing practice cues using coaching heuristics; they are not
 model cutoffs or clinical standards. The speech profile is for the current
 recording; it is not a saved user account or history.
