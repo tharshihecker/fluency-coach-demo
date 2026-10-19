@@ -12,165 +12,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
-
-import streamlit.components.v1 as components
-
-visualizer_html = """
-<!DOCTYPE html>
-<html>
-<head>
-<style>
-  body { font-family: sans-serif; color: #334155; margin: 0; padding: 0; display: flex; flex-direction: column; justify-content: center; height: 100vh; }
-  .box { border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; background-color: #f8fafc; }
-  .metric { font-size: 1.5rem; font-weight: bold; color: #168d82; }
-  .label { font-size: 0.85rem; color: #64748b; text-transform: uppercase; font-weight: bold; margin-bottom: 2px;}
-  .bar { width: 100%; height: 8px; background: #e2e8f0; border-radius: 4px; margin-top: 5px; overflow: hidden; }
-  .fill { height: 100%; background: #168d82; width: 0%; transition: width 0.05s linear; }
-  button { padding: 8px 16px; background: #168d82; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 10px; width: 100%; font-weight: bold;}
-  button:hover { background: #13776d; }
-  .flex-row { display: flex; justify-content: space-between; margin-bottom: 10px; }
-  .flex-col { display: flex; flex-direction: column; width: 45%; }
-</style>
-</head>
-<body>
-  <div class="box">
-    <button id="startBtn">🎤 Start Live Mic Preview</button>
-    <div class="flex-row">
-        <div class="flex-col">
-            <div class="label">Time</div>
-            <div class="metric" id="timer">0.0s</div>
-        </div>
-        <div class="flex-col">
-            <div class="label">Pitch</div>
-            <div class="metric" id="pitch">-- Hz</div>
-        </div>
-    </div>
-    <div>
-        <div class="label" style="display:flex; justify-content: space-between;">
-            <span>Energy</span>
-            <span id="energyVal">0%</span>
-        </div>
-        <div class="bar"><div class="fill" id="energyFill"></div></div>
-    </div>
-  </div>
-  <script>
-    let audioContext;
-    let analyser;
-    let microphone;
-    let startTime;
-    let isRecording = false;
-    let streamRef;
-
-    const startBtn = document.getElementById('startBtn');
-    const timerEl = document.getElementById('timer');
-    const pitchEl = document.getElementById('pitch');
-    const energyFill = document.getElementById('energyFill');
-    const energyVal = document.getElementById('energyVal');
-
-    function autoCorrelate(buf, sampleRate) {
-        let SIZE = buf.length;
-        let rms = 0;
-
-        for (let i = 0; i < SIZE; i++) {
-            rms += buf[i] * buf[i];
-        }
-        rms = Math.sqrt(rms / SIZE);
-        if (rms < 0.01) return -1;
-
-        let r1 = 0, r2 = SIZE - 1, thres = 0.2;
-        for (let i = 0; i < SIZE / 2; i++)
-            if (Math.abs(buf[i]) < thres) { r1 = i; break; }
-        for (let i = 1; i < SIZE / 2; i++)
-            if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
-
-        buf = buf.slice(r1, r2);
-        SIZE = buf.length;
-
-        let c = new Array(SIZE).fill(0);
-        for (let i = 0; i < SIZE; i++)
-            for (let j = 0; j < SIZE - i; j++)
-                c[i] = c[i] + buf[j] * buf[j + i];
-
-        let d = 0; while (c[d] > c[d + 1]) d++;
-        let maxval = -1, maxpos = -1;
-        for (let i = d; i < SIZE; i++) {
-            if (c[i] > maxval) {
-                maxval = c[i];
-                maxpos = i;
-            }
-        }
-        let T0 = maxpos;
-        let x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
-        let a = (x1 + x3 - 2 * x2) / 2;
-        let b = (x3 - x1) / 2;
-        if (a) T0 = T0 - b / (2 * a);
-        return sampleRate / T0;
-    }
-
-    function update() {
-        if (!isRecording) return;
-        requestAnimationFrame(update);
-
-        let bufferLength = analyser.fftSize;
-        let buffer = new Float32Array(bufferLength);
-        analyser.getFloatTimeDomainData(buffer);
-
-        let rms = 0;
-        for (let i = 0; i < bufferLength; i++) {
-            rms += buffer[i] * buffer[i];
-        }
-        rms = Math.sqrt(rms / bufferLength);
-
-        let energyPercent = Math.min(100, Math.round(rms * 400));
-        energyFill.style.width = energyPercent + "%";
-        energyVal.innerText = energyPercent + "%";
-
-        let pitch = autoCorrelate(buffer, audioContext.sampleRate);
-        if (pitch !== -1 && pitch > 50 && pitch < 1000) {
-            pitchEl.innerText = Math.round(pitch) + " Hz";
-        } else {
-            pitchEl.innerText = "-- Hz";
-        }
-
-        let elapsed = (Date.now() - startTime) / 1000;
-        timerEl.innerText = elapsed.toFixed(1) + "s";
-    }
-
-    startBtn.addEventListener('click', async () => {
-        if (isRecording) {
-            isRecording = false;
-            startBtn.innerText = "🎤 Start Live Mic Preview";
-            if (audioContext) audioContext.close();
-            if (streamRef) streamRef.getTracks().forEach(t => t.stop());
-            timerEl.innerText = "0.0s";
-            pitchEl.innerText = "-- Hz";
-            energyFill.style.width = "0%";
-            energyVal.innerText = "0%";
-            return;
-        }
-
-        try {
-            streamRef = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            analyser = audioContext.createAnalyser();
-            analyser.fftSize = 2048;
-            microphone = audioContext.createMediaStreamSource(streamRef);
-            microphone.connect(analyser);
-
-            isRecording = true;
-            startBtn.innerText = "⏹ Stop Preview";
-            startTime = Date.now();
-            update();
-        } catch (err) {
-            console.error("Error accessing mic: ", err);
-            alert("Could not access microphone.");
-        }
-    });
-  </script>
-</body>
-</html>
-"""
-
 import torch
 import whisper
 
@@ -252,10 +93,10 @@ def render_feature_chart(impacts: list[dict]) -> None:
     st.pyplot(figure, clear_figure=True)
 
 
-
 def render_radar_chart(indicators: dict) -> None:
     """Render a radar chart summarizing key fluency timing metrics."""
     import numpy as np
+    import matplotlib.pyplot as plt
 
     # Extract features focusing on timing/fluency, ignore pitch/energy
     speaking_ratio = float(indicators.get("speaking_time_ratio", 0))
@@ -307,7 +148,6 @@ def render_radar_chart(indicators: dict) -> None:
     plt.tight_layout(pad=2.0)
 
     st.pyplot(fig, clear_figure=True)
-
 
 def render_speech_profile(indicators: dict) -> None:
     """Show model-related timing measures and flag coaching cues in red."""
@@ -423,41 +263,259 @@ with st.sidebar:
     )
     st.caption("Recordings are processed on this hosted app and are not saved as project data.")
 
-
-
-
 left, right = st.columns([1, 1], gap="large")
 with left:
-    st.subheader("Live Audio Feedback")
-    st.write("Use this live preview to see your speaking energy and pitch while you prepare!")
-    components.html(visualizer_html, height=140)
-    st.divider()
 
-    if "recorded_audio_state" not in st.session_state:
-        st.session_state.recorded_audio_state = None
-    if "uploaded_audio_state" not in st.session_state:
-        st.session_state.uploaded_audio_state = None
+    import streamlit.components.v1 as components
+    components.html("""
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { font-family: sans-serif; color: #334155; margin: 0; padding: 0; }
+  .box { border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; background-color: #f8fafc; }
+  .metric { font-size: 1.5rem; font-weight: bold; color: #168d82; }
+  .label { font-size: 0.85rem; color: #64748b; text-transform: uppercase; font-weight: bold; margin-bottom: 2px;}
+  .bar { width: 100%; height: 8px; background: #e2e8f0; border-radius: 4px; margin-top: 5px; overflow: hidden; }
+  .fill { height: 100%; background: #168d82; width: 0%; transition: width 0.05s linear; }
+  .flex-row { display: flex; justify-content: space-between; margin-bottom: 10px; }
+  .flex-col { display: flex; flex-direction: column; width: 45%; }
+</style>
+</head>
+<body>
+  <div class="box" id="viz-box" style="display:none;">
+    <div style="font-weight: bold; color: #168d82; margin-bottom: 5px;">🔴 Live Recording Analysis</div>
+    <div class="flex-row">
+        <div class="flex-col">
+            <div class="label">Time</div>
+            <div class="metric" id="viz-timer">0.0s</div>
+        </div>
+        <div class="flex-col">
+            <div class="label">Pitch</div>
+            <div class="metric" id="viz-pitch">-- Hz</div>
+        </div>
+    </div>
+    <div>
+        <div class="label" style="display:flex; justify-content: space-between;">
+            <span>Energy</span>
+            <span id="viz-energyVal">0%</span>
+        </div>
+        <div class="bar"><div class="fill" id="viz-energyFill"></div></div>
+    </div>
+  </div>
 
-    recorded_audio = st.audio_input("Record speech with your microphone", disabled=st.session_state.uploaded_audio_state is not None)
+  <script>
+    // To bypass iframe restrictions and automatically trigger, we inject a script element into the parent document
+    try {
+        const parentDoc = window.parent.document;
+        if (!parentDoc.getElementById('injected-viz-script')) {
+            const script = parentDoc.createElement('script');
+            script.id = 'injected-viz-script';
+            script.innerHTML = `
+                function initVisualizer() {
+                    let vizBox = document.getElementById('viz-box');
+                    if (!vizBox) {
+                        const vizContainer = document.createElement('div');
+                        vizContainer.innerHTML = `
+                            <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; background-color: #f8fafc; margin-top: 10px; margin-bottom: 10px; display: none;" id="viz-box">
+                                <div style="font-weight: bold; color: #168d82; margin-bottom: 5px;">🔴 Live Recording Analysis</div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                    <div style="display: flex; flex-direction: column; width: 45%;">
+                                        <div style="font-size: 0.85rem; color: #64748b; text-transform: uppercase; font-weight: bold; margin-bottom: 2px;">Time</div>
+                                        <div style="font-size: 1.5rem; font-weight: bold; color: #168d82;" id="viz-timer">0.0s</div>
+                                    </div>
+                                    <div style="display: flex; flex-direction: column; width: 45%;">
+                                        <div style="font-size: 0.85rem; color: #64748b; text-transform: uppercase; font-weight: bold; margin-bottom: 2px;">Pitch</div>
+                                        <div style="font-size: 1.5rem; font-weight: bold; color: #168d82;" id="viz-pitch">-- Hz</div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 0.85rem; color: #64748b; text-transform: uppercase; font-weight: bold; margin-bottom: 2px; display:flex; justify-content: space-between;">
+                                        <span>Energy</span>
+                                        <span id="viz-energyVal">0%</span>
+                                    </div>
+                                    <div style="width: 100%; height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden;">
+                                        <div id="viz-energyFill" style="height: 100%; background: #168d82; width: 0%; transition: width 0.05s linear;"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
 
-    if recorded_audio != st.session_state.recorded_audio_state:
-        st.session_state.recorded_audio_state = recorded_audio
+                        // Insert it near the audio input
+                        const elements = document.querySelectorAll('p, div, span');
+                        let targetNode = null;
+                        for (let i = 0; i < elements.length; i++) {
+                            if (elements[i].innerText === 'Record speech with your microphone') {
+                                targetNode = elements[i].closest('[data-testid="stAudioInput"]');
+                                if(!targetNode) targetNode = elements[i].parentElement;
+                                break;
+                            }
+                        }
+
+                        if (targetNode && targetNode.parentNode) {
+                            targetNode.parentNode.insertBefore(vizContainer, targetNode);
+                        } else {
+                            const main = document.querySelector('.main .block-container');
+                            if (main) main.insertBefore(vizContainer, main.firstChild);
+                        }
+                        vizBox = document.getElementById('viz-box');
+                    }
+
+                    let audioContext;
+                    let analyser;
+                    let microphone;
+                    let startTime;
+                    let isRecording = false;
+                    let streamRef;
+
+                    const timerEl = document.getElementById('viz-timer');
+                    const pitchEl = document.getElementById('viz-pitch');
+                    const energyFill = document.getElementById('viz-energyFill');
+                    const energyVal = document.getElementById('viz-energyVal');
+
+                    function autoCorrelate(buf, sampleRate) {
+                        let SIZE = buf.length;
+                        let rms = 0;
+                        for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
+                        rms = Math.sqrt(rms / SIZE);
+                        if (rms < 0.01) return -1;
+                        let r1 = 0, r2 = SIZE - 1, thres = 0.2;
+                        for (let i = 0; i < SIZE / 2; i++) if (Math.abs(buf[i]) < thres) { r1 = i; break; }
+                        for (let i = 1; i < SIZE / 2; i++) if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
+                        buf = buf.slice(r1, r2);
+                        SIZE = buf.length;
+                        let c = new Array(SIZE).fill(0);
+                        for (let i = 0; i < SIZE; i++) for (let j = 0; j < SIZE - i; j++) c[i] = c[i] + buf[j] * buf[j + i];
+                        let d = 0; while (c[d] > c[d + 1]) d++;
+                        let maxval = -1, maxpos = -1;
+                        for (let i = d; i < SIZE; i++) if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
+                        let T0 = maxpos;
+                        let x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
+                        let a = (x1 + x3 - 2 * x2) / 2, b = (x3 - x1) / 2;
+                        if (a) T0 = T0 - b / (2 * a);
+                        return sampleRate / T0;
+                    }
+
+                    function update() {
+                        if (!isRecording) return;
+                        requestAnimationFrame(update);
+                        let bufferLength = analyser.fftSize;
+                        let buffer = new Float32Array(bufferLength);
+                        analyser.getFloatTimeDomainData(buffer);
+                        let rms = 0;
+                        for (let i = 0; i < bufferLength; i++) rms += buffer[i] * buffer[i];
+                        rms = Math.sqrt(rms / bufferLength);
+                        let energyPercent = Math.min(100, Math.round(rms * 400));
+                        if (energyFill) energyFill.style.width = energyPercent + "%";
+                        if (energyVal) energyVal.innerText = energyPercent + "%";
+                        let pitch = autoCorrelate(buffer, audioContext.sampleRate);
+                        if (pitch !== -1 && pitch > 50 && pitch < 1000) {
+                            if (pitchEl) pitchEl.innerText = Math.round(pitch) + " Hz";
+                        } else {
+                            if (pitchEl) pitchEl.innerText = "-- Hz";
+                        }
+                        let elapsed = (Date.now() - startTime) / 1000;
+                        if (timerEl) timerEl.innerText = elapsed.toFixed(1) + "s";
+                    }
+
+                    async function startRecording() {
+                        try {
+                            streamRef = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                            analyser = audioContext.createAnalyser();
+                            analyser.fftSize = 2048;
+                            microphone = audioContext.createMediaStreamSource(streamRef);
+                            microphone.connect(analyser);
+                            isRecording = true;
+                            startTime = Date.now();
+                            if (vizBox) vizBox.style.display = 'block';
+                            update();
+                        } catch (err) {
+                            console.error("Error accessing mic: ", err);
+                        }
+                    }
+
+                    function stopRecording() {
+                        isRecording = false;
+                        if (audioContext) audioContext.close();
+                        if (streamRef) streamRef.getTracks().forEach(t => t.stop());
+                        if (timerEl) timerEl.innerText = "0.0s";
+                        if (pitchEl) pitchEl.innerText = "-- Hz";
+                        if (energyFill) energyFill.style.width = "0%";
+                        if (energyVal) energyVal.innerText = "0%";
+                        if (vizBox) vizBox.style.display = 'none';
+                    }
+
+                    const observer = new MutationObserver((mutations) => {
+                        let recordingStateActive = false;
+                        const buttons = document.querySelectorAll('button');
+                        buttons.forEach(b => {
+                            const label = b.getAttribute('aria-label') || b.innerText;
+                            if (label && label.toLowerCase().includes('stop recording')) {
+                                recordingStateActive = true;
+                            }
+                        });
+                        if (recordingStateActive && !isRecording) {
+                            startRecording();
+                        } else if (!recordingStateActive && isRecording) {
+                            stopRecording();
+                        }
+                    });
+
+                    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label', 'disabled'] });
+                }
+                initVisualizer();
+            `;
+            parentDoc.body.appendChild(script);
+        }
+    } catch(e) {
+        console.error(e);
+    }
+  </script>
+</body>
+</html>
+    """, height=0, width=0)
+
+    if "widget_key" not in st.session_state:
+        st.session_state.widget_key = 0
+    if "recorded_audio" not in st.session_state:
+        st.session_state.recorded_audio = None
+    if "uploaded_audio" not in st.session_state:
+        st.session_state.uploaded_audio = None
+
+    recorded = st.audio_input("Record speech with your microphone",
+                              disabled=(st.session_state.uploaded_audio is not None),
+                              key=f"record_{st.session_state.widget_key}")
+
+    uploaded = st.file_uploader("Or upload a recording",
+                                type=["wav", "mp3", "m4a", "mp4", "ogg", "opus", "flac", "webm"],
+                                disabled=(st.session_state.recorded_audio is not None),
+                                key=f"upload_{st.session_state.widget_key}")
+
+    need_rerun = False
+
+    if recorded != st.session_state.recorded_audio:
+        st.session_state.recorded_audio = recorded
+        need_rerun = True
+
+    if uploaded != st.session_state.uploaded_audio:
+        st.session_state.uploaded_audio = uploaded
+        need_rerun = True
+
+    if need_rerun:
         st.rerun()
 
-    uploaded_audio = st.file_uploader(
-        "Or upload a recording",
-        type=["wav", "mp3", "m4a", "mp4", "ogg", "opus", "flac", "webm"],
-        disabled=st.session_state.recorded_audio_state is not None
-    )
+    if st.session_state.recorded_audio is not None or st.session_state.uploaded_audio is not None:
+        if st.button("🗑️ Clear Inputs & Start Over", use_container_width=True):
+            st.session_state.widget_key += 1
+            st.session_state.recorded_audio = None
+            st.session_state.uploaded_audio = None
+            if "fluency_result" in st.session_state:
+                del st.session_state["fluency_result"]
+            st.rerun()
 
-    if uploaded_audio != st.session_state.uploaded_audio_state:
-        st.session_state.uploaded_audio_state = uploaded_audio
-        st.rerun()
+    audio_file = st.session_state.recorded_audio or st.session_state.uploaded_audio
 
-    if st.button("Clear Inputs", use_container_width=True):
-        st.session_state.recorded_audio_state = None
-        st.session_state.uploaded_audio_state = None
-        st.rerun()
     confirm_english = st.checkbox(
         "I am speaking English (use this if an accent or stutter confuses the language check)",
         value=False,
@@ -465,7 +523,7 @@ with left:
     predict_clicked = st.button("Estimate fluency", type="primary", use_container_width=True)
     st.caption("Use a clear sample of at least 20 seconds for a useful estimate.")
 
-audio_file = recorded_audio or uploaded_audio
+
 if predict_clicked:
     st.session_state.pop("fluency_result", None)
     if audio_file is None:
