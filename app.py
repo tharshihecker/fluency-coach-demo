@@ -424,19 +424,40 @@ with st.sidebar:
     st.caption("Recordings are processed on this hosted app and are not saved as project data.")
 
 
+
+
 left, right = st.columns([1, 1], gap="large")
 with left:
     st.subheader("Live Audio Feedback")
     st.write("Use this live preview to see your speaking energy and pitch while you prepare!")
-    components.html(visualizer_html, height=180)
+    components.html(visualizer_html, height=140)
     st.divider()
 
-    recorded_audio = st.audio_input("Record speech with your microphone")
+    if "recorded_audio_state" not in st.session_state:
+        st.session_state.recorded_audio_state = None
+    if "uploaded_audio_state" not in st.session_state:
+        st.session_state.uploaded_audio_state = None
+
+    recorded_audio = st.audio_input("Record speech with your microphone", disabled=st.session_state.uploaded_audio_state is not None)
+
+    if recorded_audio != st.session_state.recorded_audio_state:
+        st.session_state.recorded_audio_state = recorded_audio
+        st.rerun()
 
     uploaded_audio = st.file_uploader(
         "Or upload a recording",
         type=["wav", "mp3", "m4a", "mp4", "ogg", "opus", "flac", "webm"],
+        disabled=st.session_state.recorded_audio_state is not None
     )
+
+    if uploaded_audio != st.session_state.uploaded_audio_state:
+        st.session_state.uploaded_audio_state = uploaded_audio
+        st.rerun()
+
+    if st.button("Clear Inputs", use_container_width=True):
+        st.session_state.recorded_audio_state = None
+        st.session_state.uploaded_audio_state = None
+        st.rerun()
     confirm_english = st.checkbox(
         "I am speaking English (use this if an accent or stutter confuses the language check)",
         value=False,
